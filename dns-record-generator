@@ -18,34 +18,40 @@ function Get-RandomNames {
 # Function to create A records
 function Create-DnsRecords {
     param(
-        [string]$ZoneName,
+        [array]$Zones,
         [array]$Records
     )
-    foreach ($record in $Records) {
-        Add-DnsServerResourceRecordA -Name $record.Name -ZoneName $ZoneName -IPv4Address $record.IP
+    foreach ($zone in $Zones) {
+        foreach ($record in $Records) {
+            Add-DnsServerResourceRecordA -Name $record.Name -ZoneName $zone -IPv4Address $record.IP
+        }
     }
 }
 
 # Function to delete DNS records (rollback)
 function Remove-DnsRecords {
     param(
-        [string]$ZoneName,
+        [array]$Zones,
         [array]$Records
     )
-    foreach ($record in $Records) {
-        Remove-DnsServerResourceRecord -ZoneName $ZoneName -Name $record.Name -Force
+    foreach ($zone in $Zones) {
+        foreach ($record in $Records) {
+            Remove-DnsServerResourceRecord -ZoneName $zone -Name $record.Name -Force -ErrorAction SilentlyContinue
+        }
     }
 }
 
 # Function to modify DNS records with new random IPs
 function Modify-DnsRecords {
     param(
-        [string]$ZoneName,
+        [array]$Zones,
         [array]$Records
     )
-    foreach ($record in $Records) {
-        $newIP = (1..4 | ForEach-Object {Get-Random -Minimum 1 -Maximum 255}) -join '.'
-        Set-DnsServerResourceRecord -ZoneName $ZoneName -OldInputObject (Get-DnsServerResourceRecord -ZoneName $ZoneName -Name $record.Name) -NewInputObject ([pscustomobject]@{HostName=$record.Name; RecordClass="IN"; IPv4Address=$newIP})
+    foreach ($zone in $Zones) {
+        foreach ($record in $Records) {
+            $newIP = (1..4 | ForEach-Object {Get-Random -Minimum 1 -Maximum 255}) -join '.'
+            Set-DnsServerResourceRecord -ZoneName $zone -OldInputObject (Get-DnsServerResourceRecord -ZoneName $zone -Name $record.Name) -NewInputObject ([pscustomobject]@{HostName=$record.Name; RecordClass="IN"; IPv4Address=$newIP}) -ErrorAction SilentlyContinue
+        }
     }
 }
 
@@ -72,7 +78,7 @@ try {
         exit
     }
     
-    # Randomly select a zone from the user's selection for each record
+    # Randomly assign records to selected zones
     $records = @()
     $names = Get-RandomNames -Count 10
     $ips = @()
@@ -100,9 +106,8 @@ try {
         }
     }
     
-    # Create DNS records
-    $zone = $selectedZones | Get-Random
-    Create-DnsRecords -ZoneName $zone -Records $records
+    # Create DNS records in all selected zones
+    Create-DnsRecords -Zones $selectedZones -Records $records
 
     # Present user with options
     while ($true) {
@@ -114,12 +119,12 @@ try {
         
         switch ($choice) {
             1 {
-                Remove-DnsRecords -ZoneName $zone -Records $records
+                Remove-DnsRecords -Zones $selectedZones -Records $records
                 Write-Host "Rollback complete." -ForegroundColor Green
                 break
             }
             2 {
-                Modify-DnsRecords -ZoneName $zone -Records $records
+                Modify-DnsRecords -Zones $selectedZones -Records $records
                 Write-Host "IP addresses modified." -ForegroundColor Green
             }
             3 {
