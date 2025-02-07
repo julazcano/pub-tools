@@ -60,11 +60,17 @@ try {
     # Prompt user to select forward lookup zones
     Write-Host "Select the forward lookup zones to use (comma-separated numbers):"
     for ($i = 0; $i -lt $zones.Count; $i++) {
-    Write-Host "[$($i + 1)] $($zones[$i])"
+        Write-Host "[$($i + 1)] $($zones[$i])"
     }
-
-    $selectedIndexes = Read-Host | ConvertFrom-Csv
-    $selectedZones = $selectedIndexes | ForEach-Object { $zones[$_-1] }
+    
+    $selectedIndexes = Read-Host "Enter your selection"
+    $selectedIndexes = $selectedIndexes -split "," | ForEach-Object { $_.Trim() -as [int] }
+    $selectedZones = $selectedIndexes | Where-Object { $_ -gt 0 -and $_ -le $zones.Count } | ForEach-Object { $zones[$_ - 1] }
+    
+    if (-not $selectedZones) {
+        Write-Error "Invalid selection. No valid zones selected."
+        exit
+    }
     
     # Randomly select a zone from the user's selection for each record
     $records = @()
