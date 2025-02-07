@@ -22,37 +22,29 @@ function Create-DnsRecords {
     )
     foreach ($record in $Records) {
         $zone = Get-Random -InputObject $Zones  # Randomly assign each record to a selected zone
-        Add-DnsServerResourceRecordA -Name $record.Name -ZoneName $zone -IPv4Address $record.IP
+        Add-DnsServerResourceRecordA -Name $record.Name -ZoneName $zone -IPv4Address $record.IP -AllowUpdateAny -TimeToLive 01:00:00
+        $record | Add-Member -MemberType NoteProperty -Name Zone -Value $zone -Force
     }
 }
 
 # Function to delete DNS records (rollback)
 function Remove-DnsRecords {
     param(
-        [array]$Zones,
         [array]$Records
     )
     foreach ($record in $Records) {
-        $zone = Get-Random -InputObject $Zones  # Ensure the correct zone is chosen per record
-        Remove-DnsServerResourceRecord -ZoneName $zone -Name $record.Name -Force -ErrorAction SilentlyContinue
+        Remove-DnsServerResourceRecord -ZoneName $record.Zone -Name $record.Name -Force -ErrorAction SilentlyContinue
     }
 }
 
 # Function to modify DNS records with new random IPs
 function Modify-DnsRecords {
     param(
-        [array]$Zones,
         [array]$Records
     )
     foreach ($record in $Records) {
-        $zone = Get-Random -InputObject $Zones  # Ensure modifications are distributed across zones
         $newIP = (1..4 | ForEach-Object {Get-Random -Minimum 1 -Maximum 255}) -join '.'
-        $existingRecord = Get-DnsServerResourceRecord -ZoneName $zone -Name $record.Name -ErrorAction SilentlyContinue
-        
-        if ($existingRecord) {
-            Remove-DnsServerResourceRecord -ZoneName $zone -Name $record.Name -Force -ErrorAction SilentlyContinue
-            Add-DnsServerResourceRecordA -Name $record.Name -ZoneName $zone -IPv4Address $newIP
-        }
+        Set-DnsServerResourceRecord -ZoneName $record.Zone -OldInputObject (Get-DnsServerResourceRecord -ZoneName $record.Zone -Name $record.Name) -NewInputObject (New-Object Microsoft.Management.Infrastructure.CimInstance -ArgumentList 'DnsServerResourceRecordA',[Microsoft.Management.Infrastructure.CimInstance]@{HostName=$record.Name; RecordClass="IN"; IPv4Address=$newIP}) -ErrorAction SilentlyContinue
     }
 }
 
@@ -120,12 +112,12 @@ try {
         
         switch ($choice) {
             1 {
-                Remove-DnsRecords -Zones $selectedZones -Records $records
+                Remove-DnsRecords -Records $records
                 Write-Host "Rollback complete." -ForegroundColor Green
                 break
             }
             2 {
-                Modify-DnsRecords -Zones $selectedZones -Records $records
+                Modify-DnsRecords -Records $records
                 Write-Host "IP addresses modified." -ForegroundColor Green
             }
             3 {
