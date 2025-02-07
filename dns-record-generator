@@ -10,7 +10,6 @@ function Get-RandomNames {
     param(
         [int]$Count
     )
-    # Use built-in dictionary file (on Unix-like systems) or provide a word source.
     $words = @('alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta', 'eta', 'theta', 'iota', 'kappa')
     $words | Sort-Object {Get-Random} | Select-Object -First $Count
 }
@@ -21,10 +20,9 @@ function Create-DnsRecords {
         [array]$Zones,
         [array]$Records
     )
-    foreach ($zone in $Zones) {
-        foreach ($record in $Records) {
-            Add-DnsServerResourceRecordA -Name $record.Name -ZoneName $zone -IPv4Address $record.IP
-        }
+    foreach ($record in $Records) {
+        $zone = Get-Random -InputObject $Zones  # Randomly assign each record to a selected zone
+        Add-DnsServerResourceRecordA -Name $record.Name -ZoneName $zone -IPv4Address $record.IP
     }
 }
 
@@ -34,10 +32,9 @@ function Remove-DnsRecords {
         [array]$Zones,
         [array]$Records
     )
-    foreach ($zone in $Zones) {
-        foreach ($record in $Records) {
-            Remove-DnsServerResourceRecord -ZoneName $zone -Name $record.Name -Force -ErrorAction SilentlyContinue
-        }
+    foreach ($record in $Records) {
+        $zone = Get-Random -InputObject $Zones  # Ensure the correct zone is chosen per record
+        Remove-DnsServerResourceRecord -ZoneName $zone -Name $record.Name -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -47,10 +44,14 @@ function Modify-DnsRecords {
         [array]$Zones,
         [array]$Records
     )
-    foreach ($zone in $Zones) {
-        foreach ($record in $Records) {
-            $newIP = (1..4 | ForEach-Object {Get-Random -Minimum 1 -Maximum 255}) -join '.'
-            Set-DnsServerResourceRecord -ZoneName $zone -OldInputObject (Get-DnsServerResourceRecord -ZoneName $zone -Name $record.Name) -NewInputObject ([pscustomobject]@{HostName=$record.Name; RecordClass="IN"; IPv4Address=$newIP}) -ErrorAction SilentlyContinue
+    foreach ($record in $Records) {
+        $zone = Get-Random -InputObject $Zones  # Ensure modifications are distributed across zones
+        $newIP = (1..4 | ForEach-Object {Get-Random -Minimum 1 -Maximum 255}) -join '.'
+        $existingRecord = Get-DnsServerResourceRecord -ZoneName $zone -Name $record.Name -ErrorAction SilentlyContinue
+        
+        if ($existingRecord) {
+            Remove-DnsServerResourceRecord -ZoneName $zone -Name $record.Name -Force -ErrorAction SilentlyContinue
+            Add-DnsServerResourceRecordA -Name $record.Name -ZoneName $zone -IPv4Address $newIP
         }
     }
 }
@@ -106,7 +107,7 @@ try {
         }
     }
     
-    # Create DNS records in all selected zones
+    # Create DNS records in randomly assigned zones
     Create-DnsRecords -Zones $selectedZones -Records $records
 
     # Present user with options
