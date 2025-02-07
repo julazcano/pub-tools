@@ -1,0 +1,126 @@
+$ErrorActionPreference = "Stop"
+
+# Function to retrieve forward lookup zones on the DNS server
+function Get-ForwardLookupZones {
+    Get-DnsServerZone | Where-Object {$_.ZoneType -eq "Primary"} | Select-Object -ExpandProperty ZoneName
+}
+
+# Function to select random dictionary names for A records
+function Get-RandomNames {
+    param(
+        [int]$Count
+    )
+    # Use built-in dictionary file (on Unix-like systems) or provide a word source.
+    $words = @('alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta', 'eta', 'theta', 'iota', 'kappa')
+    $words | Sort-Object {Get-Random} | Select-Object -First $Count
+}
+
+# Function to create A records
+function Create-DnsRecords {
+    param(
+        [string]$ZoneName,
+        [array]$Records
+    )
+    foreach ($record in $Records) {
+        Add-DnsServerResourceRecordA -Name $record.Name -ZoneName $ZoneName -IPv4Address $record.IP
+    }
+}
+
+# Function to delete DNS records (rollback)
+function Remove-DnsRecords {
+    param(
+        [string]$ZoneName,
+        [array]$Records
+    )
+    foreach ($record in $Records) {
+        Remove-DnsServerResourceRecord -ZoneName $ZoneName -Name $record.Name -Force
+    }
+}
+
+# Function to modify DNS records with new random IPs
+function Modify-DnsRecords {
+    param(
+        [string]$ZoneName,
+        [array]$Records
+    )
+    foreach ($record in $Records) {
+        $newIP = (1..4 | ForEach-Object {Get-Random -Minimum 1 -Maximum 255}) -join '.'
+        Set-DnsServerResourceRecord -ZoneName $ZoneName -OldInputObject (Get-DnsServerResourceRecord -ZoneName $ZoneName -Name $record.Name) -NewInputObject ([pscustomobject]@{HostName=$record.Name; RecordClass="IN"; IPv4Address=$newIP})
+    }
+}
+
+# Main script logic
+try {
+    $zones = Get-ForwardLookupZones
+    if (-not $zones) {
+        Write-Error "No forward lookup zones found."
+        exit
+    }
+    
+    # Prompt user to select forward lookup zones
+    Write-Host "Select the forward lookup zones to use (comma-separated numbers):"
+    $zones | ForEach-Object { "[$($_ + 1)] $_" }
+    $selectedIndexes = Read-Host | ConvertFrom-Csv
+    $selectedZones = $selectedIndexes | ForEach-Object { $zones[$_-1] }
+    
+    # Randomly select a zone from the user's selection for each record
+    $records = @()
+    $names = Get-RandomNames -Count 10
+    $ips = @()
+    
+    # Requirement A: 3 records point to the same IP
+    $commonIP = (1..4 | ForEach-Object {Get-Random -Minimum 1 -Maximum 255}) -join '.'
+    $ips += @($commonIP, $commonIP, $commonIP)
+    
+    # Requirement B: 3 records with the same name but different IPs
+    $sharedName = $names[3]
+    for ($i = 0; $i -lt 3; $i++) {
+        $ips += (1..4 | ForEach-Object {Get-Random -Minimum 1 -Maximum 255}) -join '.'
+    }
+    
+    # Requirement C: Remaining 4 records with any IPs (public or private)
+    for ($i = 0; $i -lt 4; $i++) {
+        $ips += (1..4 | ForEach-Object {Get-Random -Minimum 1 -Maximum 255}) -join '.'
+    }
+
+    # Generate 10 A record entries
+    for ($i = 0; $i -lt 10; $i++) {
+        $records += [pscustomobject]@{
+            Name = if ($i -ge 3 -and $i -lt 6) { $sharedName } else { $names[$i] }
+            IP = $ips[$i]
+        }
+    }
+    
+    # Create DNS records
+    $zone = $selectedZones | Get-Random
+    Create-DnsRecords -ZoneName $zone -Records $records
+
+    # Present user with options
+    while ($true) {
+        Write-Host "Options:" -ForegroundColor Cyan
+        Write-Host "[1] Rollback (delete) the 10 DNS entries" -ForegroundColor Yellow
+        Write-Host "[2] Modify the IP addresses of the 10 DNS entries" -ForegroundColor Yellow
+        Write-Host "[3] Quit" -ForegroundColor Yellow
+        $choice = Read-Host "Enter your choice"
+        
+        switch ($choice) {
+            1 {
+                Remove-DnsRecords -ZoneName $zone -Records $records
+                Write-Host "Rollback complete." -ForegroundColor Green
+                break
+            }
+            2 {
+                Modify-DnsRecords -ZoneName $zone -Records $records
+                Write-Host "IP addresses modified." -ForegroundColor Green
+            }
+            3 {
+                break
+            }
+            default {
+                Write-Host "Invalid choice. Please try again." -ForegroundColor Red
+            }
+        }
+    }
+} catch {
+    Write-Error $_.Exception.Message
+}
