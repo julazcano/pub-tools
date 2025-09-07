@@ -1,0 +1,84 @@
+# Requires: DnsServer module, run as Administrator
+param(
+    [string]$Server = "localhost",
+    [string]$ZoneName = "example.local",
+    [int]$RecordCount = 30000,
+    [string]$HostBase = "host",           # name prefix: host1, host2, ...
+    [string]$IpBase = "10.0.0.",          # base for last octet (will append number mod 254 + 1)
+    [int]$StartIndex = 1,
+    [int]$BatchSize = 500,
+    [int]$DelayMs = 200,                  # delay between batches in milliseconds
+    [switch]$Delete = $false,             # If true, delete records instead of adding
+    [switch]$Force = $false               # Skip confirmation prompts
+)
+
+# Safety checks
+if (-not (Get-Module -ListAvailable -Name DnsServer)) {
+    Write-Error "DnsServer module not available on this machine. Install the DNS server role or run on a DNS server."
+    exit 1
+}
+
+Import-Module DnsServer -ErrorAction Stop
+
+# Confirm action
+if (-not $Force) {
+    $action = if ($Delete) { "delete" } else { "add" }
+    $confirm = Read-Host "This script will $action $RecordCount A records in zone '$ZoneName' on server '$Server'. Continue? (Y/N)"
+    if ($confirm -notmatch "^[Yy]$") {
+        Write-Output "Operation cancelled."
+        exit 0
+    }
+}
+
+# Check zone existence and type
+$zone = Get-DnsServerZone -Name $ZoneName -ComputerName $Server -ErrorAction SilentlyContinue
+if (-not $Delete) {
+    if (-not $zone) {
+        Write-Output "Creating primary zone $ZoneName on $Server..."
+        Add-DnsServerPrimaryZone -Name $ZoneName -ReplicationScope "Domain" -ComputerName $Server -ZoneFile "$ZoneName.dns" -ErrorAction Stop
+    } else {
+        Write-Output "Zone $ZoneName already exists on $Server."
+        if ($zone.ZoneType -ne "Primary") {
+            Write-Error "Zone $ZoneName is not a primary zone. Cannot add records."
+            exit 1
+        }
+    }
+} else {
+    if (-not $zone) {
+        Write-Error "Zone $ZoneName does not exist on $Server. Nothing to delete."
+        exit 1
+    }
+}
+
+$total = $RecordCount
+$index = $StartIndex
+$processed = 0
+$action = if ($Delete) { "deleting" } else { "creating" }
+Write-Output "Beginning $action of $total A records in $ZoneName on $Server..."
+
+while ($processed -lt $total) {
+    $batch = [Math]::Min($BatchSize, $total - $processed)
+    $jobs = @()
+    for ($i = 0; $i -lt $batch; $i++) {
+        $num = $index + $i
+        $hostname = "$HostBase$num"
+        $lastOctet = (($num - 1) % 254) + 1
+        $ip = if ($IpBase -match "\.$") { "$IpBase$lastOctet" } else { "$IpBase.$lastOctet" }
+        
+        try {
+            if ($Delete) {
+                Remove-DnsServerResourceRecord -ZoneName $ZoneName -ComputerName $Server -Name $hostname -RRType A -Force -ErrorAction Stop
+            } else {
+                Add-DnsServerResourceRecordA -Name $hostname -ZoneName $ZoneName -IPv4Address $ip -ComputerName $Server -AllowUpdateAny -ErrorAction Stop
+            }
+        } catch {
+            Write-Warning "Failed to $action $hostname -> $ip : $($_.Exception.Message)"
+        }
+    }
+    $processed += $batch
+    $index += $batch
+    Write-Progress -Activity "$action A Records" -Status "$processed / $total complete" -PercentComplete (($processed / $total) * 100)
+    Start-Sleep -Milliseconds $DelayMs
+}
+
+Write-Output "Completed $action $processed records in zone $ZoneName."
