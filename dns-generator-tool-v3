@@ -4,7 +4,7 @@ param(
     [string]$ZoneName = "example.local",
     [int]$RecordCount = 30000,
     [string]$HostBase = "host",           # name prefix: host1, host2, ...
-    [string]$IpBase = "10.0.0.",          # base for last octet (will append number mod 254 + 1)
+    [string]$IpBase = "10.0.",            # base for third and fourth octets (e.g., "10.0." for /16)
     [int]$StartIndex = 1,
     [int]$BatchSize = 500,
     [int]$DelayMs = 200,                  # delay between batches in milliseconds
@@ -58,12 +58,16 @@ Write-Output "Beginning $action of $total A records in $ZoneName on $Server..."
 
 while ($processed -lt $total) {
     $batch = [Math]::Min($BatchSize, $total - $processed)
-    $jobs = @()
     for ($i = 0; $i -lt $batch; $i++) {
         $num = $index + $i
         $hostname = "$HostBase$num"
-        $lastOctet = (($num - 1) % 254) + 1
-        $ip = if ($IpBase -match "\.$") { "$IpBase$lastOctet" } else { "$IpBase.$lastOctet" }
+        
+        # Generate IP for /16: third octet = (num - 1) / 256, fourth octet = (num - 1) % 256
+        # This gives 10.0.0.1 to 10.0.255.254 for num=1 to 65534
+        $relativeNum = $num - 1  # 0-based for calculation
+        $thirdOctet = [Math]::Floor($relativeNum / 256)
+        $fourthOctet = $relativeNum % 256
+        $ip = "$IpBase$thirdOctet.$fourthOctet"
         
         try {
             if ($Delete) {
